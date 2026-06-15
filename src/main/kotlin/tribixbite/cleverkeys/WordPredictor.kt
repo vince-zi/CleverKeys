@@ -161,6 +161,9 @@ class WordPredictor {
     // v1.2.7: Use ConcurrentHashMap for thread-safety (accessed from async loader thread)
     private val userWordOriginalCase: MutableMap<String, String> = java.util.concurrent.ConcurrentHashMap()
 
+    // V2 dictionary canonical-to-normalized form mapping (e.g. Chinese character to Pinyin)
+    private val wordPinyinMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     // OPTIMIZATION: Async loading state
     @Volatile
     private var isLoadingState: Boolean = false
@@ -584,6 +587,7 @@ class WordPredictor {
      * v1.2.5 FIX: Also checks installed language packs (issue #63 root cause)
      */
     fun loadDictionary(context: Context, language: String) {
+        wordPinyinMap.clear()
         dictionary.get().clear()
         prefixIndex.get().clear()
 
@@ -598,7 +602,7 @@ class WordPredictor {
             val dictFile = packManager.getDictionaryPath(language)
             if (dictFile != null) {
                 loadedBinary = BinaryDictionaryLoader.loadDictionaryWithPrefixIndexFromFile(
-                    dictFile, dictionary.get(), prefixIndex.get()
+                    dictFile, dictionary.get(), prefixIndex.get(), wordPinyinMap
                 )
                 if (loadedBinary) {
                     Log.i(TAG, "Loaded dictionary from language pack: $language (${dictionary.get().size} words)")
@@ -614,7 +618,7 @@ class WordPredictor {
             // Binary format includes pre-built prefix index, eliminating runtime computation
             val binaryFilename = "dictionaries/${language}_enhanced.bin"
             loadedBinary = BinaryDictionaryLoader.loadDictionaryWithPrefixIndex(
-                context, binaryFilename, dictionary.get(), prefixIndex.get()
+                context, binaryFilename, dictionary.get(), prefixIndex.get(), wordPinyinMap
             )
 
             if (loadedBinary) {
@@ -723,7 +727,9 @@ class WordPredictor {
             isLoadingState = false  // Reset flag so new load can proceed
         }
 
-        asyncLoader.loadDictionaryAsync(context, language, object : AsyncDictionaryLoader.LoadCallback {
+        wordPinyinMap.clear()
+
+        asyncLoader.loadDictionaryAsync(context, language, wordPinyinMap, object : AsyncDictionaryLoader.LoadCallback {
             override fun onLoadStarted(lang: String) {
                 isLoadingState = true
                 Log.d(TAG, "Started async dictionary load: $lang")
@@ -1504,7 +1510,10 @@ class WordPredictor {
 
         // If typed prefix is longer than indexed prefix, filter further
         if (prefix.length > PREFIX_INDEX_MAX_LENGTH) {
-            return candidates.filter { it.startsWith(prefix) }.toSet()
+            return candidates.filter {
+                val matchWord = if (currentLanguage == "zh") wordPinyinMap[it] ?: it else it
+                matchWord.startsWith(prefix)
+            }.toSet()
         }
 
         return candidates
@@ -1737,11 +1746,12 @@ class WordPredictor {
      * Calculate base score for prefix-based matching (used by unified scoring)
      */
     private fun calculatePrefixScore(word: String, keySequence: String): Int {
+        val matchWord = if (currentLanguage == "zh") wordPinyinMap[word] ?: word else word
         // Direct match is highest score
-        if (word == keySequence) return 1000
+        if (word == keySequence || matchWord == keySequence) return 1000
 
         // Word starts with sequence (this is guaranteed by caller, but score based on completion ratio)
-        if (word.startsWith(keySequence)) {
+        if (matchWord.startsWith(keySequence)) {
             // Higher score for more completion, but prefer shorter completions
             val baseScore = 800
 
@@ -1749,7 +1759,7 @@ class WordPredictor {
             val prefixBonus = keySequence.length * 50
 
             // Slight penalty for very long words to prefer common shorter words
-            val lengthPenalty = max(0, (word.length - 6) * 10)
+            val lengthPenalty = max(0, (matchWord.length - 6) * 10)
 
             return baseScore + prefixBonus - lengthPenalty
         }
@@ -1864,11 +1874,12 @@ class WordPredictor {
         //    aligns with the typed word index-by-index. Levenshtein handles
         //    the harder case where one is a one-off insertion or deletion.
         for ((dictWord, candidateFrequency) in dictionary.get()) {
-            val lengthDiff = kotlin.math.abs(dictWord.length - wordLength)
+            val matchWord = if (currentLanguage == "zh") wordPinyinMap[dictWord] ?: dictWord else dictWord
+            val lengthDiff = kotlin.math.abs(matchWord.length - wordLength)
             if (lengthDiff > maxLengthDiff) continue
 
             // Prefix match (when required by config).
-            if (prefix != null && !dictWord.startsWith(prefix)) continue
+            if (prefix != null && !matchWord.startsWith(prefix)) continue
 
             // Dual-gate scoring. Adjacency-weighted scores reward typos on
             // physically-near keys, but applied naively they let unrelated
@@ -1895,7 +1906,7 @@ class WordPredictor {
                 var weightedSum = 0f
                 for (i in 0 until wordLength) {
                     val a = lowerTypedWord[i]
-                    val b = dictWord[i]
+                    val b = matchWord[i]
                     if (a == b) exactCount++
                     weightedSum += KeyAdjacency.substitutionScore(a, b)
                 }
@@ -1903,10 +1914,10 @@ class WordPredictor {
                 val weightedScore = weightedSum / wordLength
                 if (exactRatio >= MIN_SAME_LENGTH_EXACT_RATIO) weightedScore else -1f
             } else {
-                val ed = KeyAdjacency.weightedEditDistance(lowerTypedWord, dictWord)
+                val ed = KeyAdjacency.weightedEditDistance(lowerTypedWord, matchWord)
                 val maxEd = lengthDiff + LENGTH_DIFF_ED_BUDGET
                 if (ed <= maxEd) {
-                    val maxLen = maxOf(wordLength, dictWord.length).toFloat()
+                    val maxLen = maxOf(wordLength, matchWord.length).toFloat()
                     (1f - ed / maxLen).coerceAtLeast(0f)
                 } else {
                     -1f

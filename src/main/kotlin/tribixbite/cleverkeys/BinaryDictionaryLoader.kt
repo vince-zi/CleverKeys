@@ -256,7 +256,8 @@ object BinaryDictionaryLoader {
         context: Context,
         filename: String,
         outDictionary: MutableMap<String, Int>,
-        outPrefixIndex: MutableMap<String, MutableSet<String>>
+        outPrefixIndex: MutableMap<String, MutableSet<String>>,
+        outNormalizedMap: MutableMap<String, String>? = null
     ): Boolean {
         // OPTIMIZATION v3 (perftodos3.md): Use android.os.Trace for system-level profiling
         android.os.Trace.beginSection("BinaryDictionaryLoader.loadDictionaryWithPrefixIndex")
@@ -299,13 +300,14 @@ object BinaryDictionaryLoader {
 
                 outDictionary.clear()
                 outPrefixIndex.clear()
+                outNormalizedMap?.clear()
 
                 if (isV1) {
                     // V1: Load pre-built prefix index from file
                     loadDictionaryWithPrefixIndexV1(buffer, outDictionary, outPrefixIndex)
                 } else {
                     // V2: Load dictionary and build prefix index at runtime
-                    loadDictionaryWithPrefixIndexV2(buffer, outDictionary, outPrefixIndex)
+                    loadDictionaryWithPrefixIndexV2(buffer, outDictionary, outPrefixIndex, outNormalizedMap)
                 }
 
                 val loadTime = System.currentTimeMillis() - startTime
@@ -336,7 +338,8 @@ object BinaryDictionaryLoader {
     fun loadDictionaryWithPrefixIndexFromFile(
         file: java.io.File,
         outDictionary: MutableMap<String, Int>,
-        outPrefixIndex: MutableMap<String, MutableSet<String>>
+        outPrefixIndex: MutableMap<String, MutableSet<String>>,
+        outNormalizedMap: MutableMap<String, String>? = null
     ): Boolean {
         android.os.Trace.beginSection("BinaryDictionaryLoader.loadDictionaryWithPrefixIndexFromFile")
         try {
@@ -376,11 +379,12 @@ object BinaryDictionaryLoader {
 
                 outDictionary.clear()
                 outPrefixIndex.clear()
+                outNormalizedMap?.clear()
 
                 if (isV1) {
                     loadDictionaryWithPrefixIndexV1(buffer, outDictionary, outPrefixIndex)
                 } else {
-                    loadDictionaryWithPrefixIndexV2(buffer, outDictionary, outPrefixIndex)
+                    loadDictionaryWithPrefixIndexV2(buffer, outDictionary, outPrefixIndex, outNormalizedMap)
                 }
 
                 val loadTime = System.currentTimeMillis() - startTime
@@ -460,7 +464,8 @@ object BinaryDictionaryLoader {
     private fun loadDictionaryWithPrefixIndexV2(
         buffer: ByteBuffer,
         outDictionary: MutableMap<String, Int>,
-        outPrefixIndex: MutableMap<String, MutableSet<String>>
+        outPrefixIndex: MutableMap<String, MutableSet<String>>,
+        outNormalizedMap: MutableMap<String, String>? = null
     ) {
         // Read V2 header (magic+version already consumed)
         val langBytes = ByteArray(4)
@@ -469,29 +474,63 @@ object BinaryDictionaryLoader {
 
         val wordCount = buffer.int
         val canonicalOffset = buffer.int
-        buffer.position(buffer.position() + 28) // Skip normalized/accent offsets + reserved
+        val normalizedOffset = buffer.int
+        val accentMapOffset = buffer.int
+        buffer.position(buffer.position() + 20) // Skip reserved
 
         // Load canonical words with frequency ranks
         buffer.position(canonicalOffset)
+        val canonicals = Array(wordCount) { "" }
+        val ranks = IntArray(wordCount)
 
         for (i in 0 until wordCount) {
             val wordLen = buffer.short.toInt() and 0xFFFF
             val wordBytes = ByteArray(wordLen)
             buffer.get(wordBytes)
             val word = String(wordBytes, Charsets.UTF_8)
+            canonicals[i] = word
             val rank = buffer.get().toInt() and 0xFF
+            ranks[i] = rank
 
             // Convert rank (0-255) to frequency
             // rank 0 -> freq 1000000 (most common)
             // rank 255 -> freq ~5000 (least common)
             val frequency = 1000000 - (rank * 3900)
             outDictionary[word] = frequency
+        }
 
-            // Build prefix index (1-3 character prefixes)
-            val maxPrefixLen = kotlin.math.min(3, word.length)
-            for (len in 1..maxPrefixLen) {
-                val prefix = word.substring(0, len).lowercase()
-                outPrefixIndex.getOrPut(prefix) { HashSet() }.add(word)
+        // Load normalized words
+        buffer.position(normalizedOffset)
+        val normalizedCount = buffer.int
+        val normalizeds = Array(normalizedCount) { "" }
+
+        for (i in 0 until normalizedCount) {
+            val wordLen = buffer.short.toInt() and 0xFFFF
+            val wordBytes = ByteArray(wordLen)
+            buffer.get(wordBytes)
+            normalizeds[i] = String(wordBytes, Charsets.UTF_8)
+        }
+
+        // Load accent map and build prefix index using normalized prefixes mapping to canonicals
+        buffer.position(accentMapOffset)
+        for (i in 0 until normalizedCount) {
+            val canonicalCount = buffer.get().toInt() and 0xFF
+            val normalized = normalizeds[i]
+            for (j in 0 until canonicalCount) {
+                val canonicalIdx = buffer.int
+                if (canonicalIdx < wordCount) {
+                    val canonical = canonicals[canonicalIdx]
+                    
+                    // Prefix index built on normalized forms
+                    val maxPrefixLen = kotlin.math.min(3, normalized.length)
+                    for (len in 1..maxPrefixLen) {
+                        val prefix = normalized.substring(0, len).lowercase()
+                        outPrefixIndex.getOrPut(prefix) { HashSet() }.add(canonical)
+                    }
+
+                    // Build canonical -> normalized mapping
+                    outNormalizedMap?.put(canonical, normalized)
+                }
             }
         }
 

@@ -3742,6 +3742,10 @@ class SettingsActivity : ComponentActivity(), SharedPreferences.OnSharedPreferen
                         onSelectionChange = { index ->
                             primaryLanguage = primaryOptions.getOrElse(index) { "en" }
                             saveSetting("pref_primary_language", primaryLanguage)
+                            if (primaryLanguage != "en" && primaryLanguageAlt != "en") {
+                                primaryLanguageAlt = "en"
+                                saveSetting("pref_primary_language_alt", "en")
+                            }
                             // Reload per-language prefix boost settings
                             loadPrefixBoostForLanguage(primaryLanguage)
                         }

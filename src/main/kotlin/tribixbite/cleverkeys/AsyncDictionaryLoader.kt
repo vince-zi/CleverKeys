@@ -128,6 +128,7 @@ class AsyncDictionaryLoader {
     fun loadDictionaryAsync(
         context: Context,
         language: String,
+        outNormalizedMap: MutableMap<String, String>? = null,
         callback: LoadCallback
     ) {
         // Cancel any previous loading task
@@ -154,7 +155,7 @@ class AsyncDictionaryLoader {
                 val prefixIndex = mutableMapOf<String, MutableSet<String>>()
 
                 val loadedBinary = BinaryDictionaryLoader.loadDictionaryWithPrefixIndex(
-                    context, binaryFilename, dictionary, prefixIndex
+                    context, binaryFilename, dictionary, prefixIndex, outNormalizedMap
                 )
 
                 if (!loadedBinary) {

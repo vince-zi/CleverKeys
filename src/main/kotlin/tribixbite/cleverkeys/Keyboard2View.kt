@@ -937,7 +937,14 @@ class Keyboard2View @JvmOverloads constructor(
         try {
             val prefs = DirectBootAwarePreferences.get_shared_preferences(context)
             val currentPrimary = prefs.getString("pref_primary_language", "en") ?: "en"
-            val alternatePrimary = prefs.getString("pref_primary_language_alt", "es") ?: "es"
+            var alternatePrimary = prefs.getString("pref_primary_language_alt", "es") ?: "es"
+
+            // Safeguard: if switching from a non-English language (like "zh") and the alternate is NOT "en",
+            // default the alternate to "en". This ensures Chinese and English toggle seamlessly.
+            if (currentPrimary != "en" && alternatePrimary != "en") {
+                alternatePrimary = "en"
+            }
+
             Log.d("Keyboard2View", "Toggle primary: $currentPrimary -> $alternatePrimary")
 
             // Swap the languages
