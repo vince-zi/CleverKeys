@@ -5714,6 +5714,7 @@ class SettingsActivity : ComponentActivity(), SharedPreferences.OnSharedPreferen
             "ms" -> "Malay (Bahasa Melayu)"
             "sw" -> "Swahili (Kiswahili)"
             "tl" -> "Tagalog (Filipino)"
+            "zh" -> "Chinese (中文)"
             else -> code.uppercase()
         }
     }

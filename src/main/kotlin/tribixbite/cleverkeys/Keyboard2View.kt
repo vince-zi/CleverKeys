@@ -1003,6 +1003,7 @@ class Keyboard2View @JvmOverloads constructor(
             "ms" -> "Malay"
             "tl" -> "Tagalog"
             "sw" -> "Swahili"
+            "zh" -> "Chinese"
             "none" -> "None"
             else -> langCode.uppercase()
         }

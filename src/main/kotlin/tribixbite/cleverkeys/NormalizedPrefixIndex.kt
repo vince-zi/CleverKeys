@@ -87,6 +87,32 @@ class NormalizedPrefixIndex {
     }
 
     /**
+     * Add a word to the index with a pre-computed normalized form.
+     * Useful for languages where normalized forms are not easily derived from canonical form (e.g., Chinese Pinyin).
+     *
+     * @param normalized The pre-computed normalized form (lowercase a-z only)
+     * @param canonical The display form
+     * @param frequencyRank Frequency rank 0-255 (0 = most common)
+     */
+    fun addWord(normalized: String, canonical: String, frequencyRank: Int) {
+        if (normalized.isEmpty()) return
+
+        // Add to canonical map
+        val entry = CanonicalEntry(canonical, frequencyRank)
+        canonicalMap.getOrPut(normalized) { mutableListOf() }.add(entry)
+
+        // Add to prefix index (prefixes of length 1 to PREFIX_MAX_LENGTH)
+        val maxLen = minOf(PREFIX_MAX_LENGTH, normalized.length)
+        for (len in 1..maxLen) {
+            val prefix = normalized.substring(0, len)
+            prefixIndex.getOrPut(prefix) { mutableSetOf() }.add(normalized)
+        }
+
+        wordCount++
+    }
+
+
+    /**
      * Build index from a list of words with frequencies.
      *
      * @param words List of (canonical, frequencyRank) pairs

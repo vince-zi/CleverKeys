@@ -761,10 +761,11 @@ object BinaryDictionaryLoader {
         buffer.position(accentMapOffset)
         for (i in 0 until normalizedCount) {
             val canonicalCount = buffer.get().toInt() and 0xFF
+            val normalized = normalizeds[i]
             for (j in 0 until canonicalCount) {
                 val canonicalIdx = buffer.int
                 if (canonicalIdx < wordCount) {
-                    outIndex.addWord(canonicals[canonicalIdx], ranks[canonicalIdx])
+                    outIndex.addWord(normalized, canonicals[canonicalIdx], ranks[canonicalIdx])
                 }
             }
         }
